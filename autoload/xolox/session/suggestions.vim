@@ -20,12 +20,9 @@ function! xolox#session#suggestions#vcs_feature_branch() " {{{1
   else
     return []
   endif
-  let result = xolox#misc#os#exec({'command': command, 'check': 0})
-  if result['exit_code'] == 0 && !empty(result['stdout'])
-    let branch_name = xolox#misc#str#trim(result['stdout'][0])
-    if !empty(branch_name) && index(names_to_ignore, branch_name) == -1
-      return [xolox#misc#str#slug(branch_name)]
-    endif
+  let branch_name = systemlist(command)[0];
+  if !empty(branch_name) && index(names_to_ignore, branch_name) == -1
+    return [branch_name]
   endif
   return []
 endfunction

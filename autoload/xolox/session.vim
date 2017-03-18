@@ -6,6 +6,27 @@
 
 let g:xolox#session#version = '2.13.1'
 
+" Initialize variables
+if !exists('g:session_persist_font')
+  let g:session_persist_font = 1
+endif
+
+if !exists('g:session_autosave_to')
+  let g:session_autosave_to = ''
+endif
+
+if !exists('g:session_autosave_silent')
+  let g:session_autosave_silent = 0
+endif
+
+if !exists('g:session_lock_enabled')
+  let g:session_lock_enabled = 1
+endif
+
+if !exists('g:session_lock_directory')
+  let g:session_lock_directory = ''
+endif
+
 " Public API for session persistence. {{{1
 
 function! xolox#session#save_session(commands, filename) " {{{2
@@ -40,7 +61,7 @@ function! xolox#session#save_session(commands, filename) " {{{2
   " the session is restored in a GUI Vim, things will look funky :-).
   if has('gui') && is_all_tabs
     call add(a:commands, 'set guioptions=' . escape(&go, ' "\'))
-    if xolox#misc#option#get('session_persist_font', 1)
+    if g:session_persist_font
       call add(a:commands, 'silent! set guifont=' . escape(&gfn, ' "\'))
     endif
   endif
@@ -167,6 +188,7 @@ function! xolox#session#save_state(commands) " {{{2
   " script.
   let tempfile = tempname()
   let ssop_save = &sessionoptions
+  " FIXME: Can we just filter all lines at once? like "apply_filters"
   try
     " The default value of &sessionoptions includes "options" which causes
     " :mksession to include all Vim options and mappings in generated session
@@ -187,6 +209,7 @@ function! xolox#session#save_state(commands) " {{{2
     call xolox#session#save_special_windows(lines)
     if !xolox#session#include_tabs()
       " Customize the output of :mksession for tab scoped sessions.
+      " NOTE: Maybe a closure here
       let buffers = tabpagebuflist()
       call map(lines, 's:tabpage_filter(buffers, v:val)')
     endif
@@ -391,7 +414,7 @@ function! xolox#session#auto_load() " {{{2
   if xolox#session#is_empty()
     " Check whether a session matching the user-specified server name exists.
     if v:servername !~ '^\cgvim\d*$'
-      for session in xolox#session#get_names(0)
+      for session in xolox#session#get_names(0) " NOTE: not suggested names?
         if v:servername ==? session
           call xolox#session#open_cmd(session, '', 'OpenSession')
           return
@@ -436,7 +459,7 @@ function! xolox#session#is_empty() " {{{2
   let current_buffer_is_empty = (&modified == 0 && getline(1, '$') == [''])
   let current_buffer_is_startify = (&filetype == 'startify')
   let buffer_list_is_empty = (bufname('%') == '' && empty(filter(range(1, bufnr('$')), 'buflisted(v:val) && v:val != ' . bufnr(''))))
-  let buffer_list_is_persistent = (index(xolox#misc#option#split(&viminfo), '%') >= 0)
+  let buffer_list_is_persistent = &viminfo =~ '%'
   return (current_buffer_is_empty || current_buffer_is_startify) && (buffer_list_is_empty || buffer_list_is_persistent)
 endfunction
 
@@ -454,7 +477,7 @@ function! xolox#session#auto_save() " {{{2
     return
   endif
   " Get the name of the session for automatic saving.
-  let name = xolox#misc#option#get('session_autosave_to')
+  let name = g:session_autosave_to
   if empty(name)
     " Get the name of the active session (if any).
     let name = xolox#session#find_current_session()
@@ -463,9 +486,7 @@ function! xolox#session#auto_save() " {{{2
     if empty(name) && (empty(xolox#session#get_names(0)) || g:session_default_overwrite)
       let name = g:session_default_name
     endif
-  endif
-  " Prompt the user to save the active/first/default session?
-  if !empty(name)
+  else
     let is_tab_scoped = xolox#session#is_tab_scoped()
     let msg = "Do you want to save your %s before quitting Vim?"
     if s:prompt(printf(msg, xolox#session#get_label(name, is_tab_scoped)), ["&Save", "&Don't Save"], 'g:session_autosave') == 1
@@ -483,7 +504,7 @@ function! xolox#session#auto_save() " {{{2
   endif
 endfunction
 
-function! xolox#session#auto_save_periodic() " {{{2
+function! xolox#session#auto_save_periodic(timer_id) " {{{2
   " Automatically saves the current editing session every few minutes.
   " Normally called by the [CursorHold] [] and [CursorHoldI] [] automatic
   " command events.
@@ -503,7 +524,7 @@ function! xolox#session#auto_save_periodic() " {{{2
           let function = 'xolox#session#save_cmd'
           let arguments = [name, '', 'SaveSession']
         endif
-        if xolox#misc#option#get('session_autosave_silent', 0)
+        if g:session_autosave_silent
           " Silence informational messages perceived as noisy.
           " https://github.com/xolox/vim-session/issues/120
           silent call call(function, arguments)
@@ -551,8 +572,8 @@ function! s:prompt(msg, choices, option_name)
     return 0
   else
     if g:session_verbose_messages
-      let format = "%s\n\nNote that you can permanently disable this dialog by adding the following line to your %s script:\n\n\t:let %s = 'no'"
-      let prompt = printf(format, a:msg, xolox#misc#os#is_win() ? '~\_vimrc' : '~/.vimrc', a:option_name)
+      let format = "%s\n\nNote that you can permanently disable this dialog by adding the following line to your vimrc script:\n\n\t:let %s = 'no'"
+      let prompt = printf(format, a:msg, a:option_name)
     else
       let prompt = a:msg
     endif
@@ -568,11 +589,11 @@ function! xolox#session#open_cmd(name, bang, command) abort " {{{2
   if name == ''
     return -1
   else
-    let starttime = xolox#misc#timer#start()
     let path = xolox#session#name_to_path(name)
     if !filereadable(path)
-      let msg = "session.vim %s: The %s session at %s doesn't exist!"
-      call xolox#misc#msg#warn(msg, g:xolox#session#version, string(name), fnamemodify(path, ':~'))
+      let msg = printf("session.vim %s: The %s session at %s doesn't exist!",
+            \ g:xolox#session#version, string(name), fnamemodify(path, ':~'))
+      call s:showmsg(msg, 'warning')
       return 0
     elseif a:bang == '!' || !s:session_is_locked(name, a:command)
       let oldcwd = s:nerdtree_persist()
@@ -589,8 +610,10 @@ function! xolox#session#open_cmd(name, bang, command) abort " {{{2
       endif
       call s:last_session_persist(name)
       call s:flush_session()
-      call xolox#misc#timer#stop("session.vim %s: Opened %s %s session in %s.", g:xolox#session#version, session_type, string(name), starttime)
-      call xolox#misc#msg#info("session.vim %s: Opened %s %s session from %s.", g:xolox#session#version, session_type, string(name), fnamemodify(path, ':~'))
+      let msg = printf("session.vim %s: Opened %s %s session from %s.",
+            \ g:xolox#session#version, session_type, string(name),
+            \ fnamemodify(path, ':~'))
+      call s:showmsg(msg)
     endif
   endif
   return 1
@@ -609,21 +632,23 @@ function! xolox#session#view_cmd(name) abort " {{{2
   if name != ''
     let path = xolox#session#name_to_path(name)
     if !filereadable(path)
-      let msg = "session.vim %s: The %s session at %s doesn't exist!"
-      call xolox#misc#msg#warn(msg, g:xolox#session#version, string(name), fnamemodify(path, ':~'))
+      let msg = printf("session.vim %s: The %s session at %s doesn't exist!",
+            \ g:xolox#session#version, string(name), fnamemodify(path, ':~'))
+      call s:showmsg(msg, 'warning')
     else
       if has('gui_running')
         execute 'tab drop' fnameescape(path)
       else
         execute 'tabedit' fnameescape(path)
       endif
-      call xolox#misc#msg#info("session.vim %s: Viewing session script %s.", g:xolox#session#version, fnamemodify(path, ':~'))
+      let msg = printf("session.vim %s: Viewing session script %s.",
+            \ g:xolox#session#version, fnamemodify(path, ':~'))
+      call s:showmsg(msg)
     endif
   endif
 endfunction
 
 function! xolox#session#save_cmd(name, bang, command) abort " {{{2
-  let starttime = xolox#misc#timer#start()
   let name = s:unescape(a:name)
   if empty(name)
     let name = xolox#session#find_current_session()
@@ -636,18 +661,17 @@ function! xolox#session#save_cmd(name, bang, command) abort " {{{2
   if a:bang == '!' || !s:session_is_locked(name, a:command)
     let lines = []
     call xolox#session#save_session(lines, friendly_path)
-    if xolox#misc#os#is_win() && !xolox#session#options_include('unix')
-      call map(lines, 'v:val . "\r"')
-    endif
     if writefile(lines, path) != 0
-      let msg = "session.vim %s: Failed to save %s session to %s!"
-      call xolox#misc#msg#warn(msg, g:xolox#session#version, string(name), friendly_path)
+      let msg = printf("session.vim %s: Failed to save %s session to %s!",
+            \ g:xolox#session#version, string(name), friendly_path)
+      call s:showmsg(msg, 'warning')
     else
       call s:last_session_persist(name)
       call s:flush_session()
       let label = xolox#session#get_label(name, !xolox#session#include_tabs())
-      call xolox#misc#timer#stop("session.vim %s: Saved %s in %s.", g:xolox#session#version, label, starttime)
-      call xolox#misc#msg#info("session.vim %s: Saved %s to %s.", g:xolox#session#version, label, friendly_path)
+      let msg = printf("session.vim %s: Saved %s to %s.",
+            \ g:xolox#session#version, label, friendly_path)
+      call s:showmsg(msg)
       if xolox#session#include_tabs()
         let v:this_session = path
       else
@@ -666,16 +690,19 @@ function! xolox#session#delete_cmd(name, bang) " {{{2
   if name != ''
     let path = xolox#session#name_to_path(name)
     if !filereadable(path)
-      let msg = "session.vim %s: The %s session at %s doesn't exist!"
-      call xolox#misc#msg#warn(msg, g:xolox#session#version, string(name), fnamemodify(path, ':~'))
+      let msg = printf("session.vim %s: The %s session at %s doesn't exist!",
+            \ g:xolox#session#version, string(name), fnamemodify(path, ':~'))
+      call s:showmsg(msg, 'warning')
     elseif a:bang == '!' || !s:session_is_locked(name, 'DeleteSession')
       if delete(path) != 0
-        let msg = "session.vim %s: Failed to delete %s session at %s!"
-        call xolox#misc#msg#warn(msg, g:xolox#session#version, string(name), fnamemodify(path, ':~'))
+        let msg = printf("session.vim %s: Failed to delete %s session at %s!",
+              \ g:xolox#session#version, string(name), fnamemodify(path, ':~'))
+        call s:showmsg(msg, 'warning')
       else
         call s:unlock_session(path)
-        let msg = "session.vim %s: Deleted %s session at %s."
-        call xolox#misc#msg#info(msg, g:xolox#session#version, string(name), fnamemodify(path, ':~'))
+        let msg = printf("session.vim %s: Deleted %s session at %s.",
+              \ g:xolox#session#version, string(name), fnamemodify(path, ':~'))
+        call s:showmsg(msg)
       endif
     endif
   endif
@@ -691,8 +718,6 @@ function! xolox#session#close_cmd(bang, silent, save_allowed, command) abort " {
       if s:prompt(printf(msg, label), ["&Save", "&Don't Save"], 'g:session_autosave') == 1
         call xolox#session#save_cmd(name, a:bang, a:command)
       endif
-    else
-      call xolox#misc#msg#debug("session.vim %s: Session reset requested, not saving changes to session ..", g:xolox#session#version)
     endif
     call s:unlock_session(xolox#session#name_to_path(name))
   endif
@@ -724,9 +749,9 @@ function! xolox#session#close_cmd(bang, silent, save_allowed, command) abort " {
   endif
   call s:flush_session()
   if !a:silent
-    let msg = "session.vim %s: Closed %s."
-    let label = xolox#session#get_label(xolox#session#find_current_session(), !is_all_tabs)
-    call xolox#misc#msg#info(msg, g:xolox#session#version, label)
+    let msg = printf("session.vim %s: Closed %s.", g:xolox#session#version,
+          \ xolox#session#get_label(xolox#session#find_current_session(), !is_all_tabs))
+    call s:showmsg(msg)
   endif
   if xolox#session#is_tab_scoped()
     let t:this_session = ''
@@ -767,7 +792,7 @@ function! xolox#session#append_tab_cmd(name, bang, count, command) abort " {{{2
       endif
       if status == 0
         " Switching tab pages cleared the warning message. Repeat it now.
-        call xolox#misc#msg#warn(get(g:xolox_messages, -1, ''))
+        s:showmsg(get(g:xolox_messages, -1, ''), 'warning')
       endif
     endif
   finally
@@ -788,8 +813,9 @@ endfunction
 function! xolox#session#restart_cmd(bang, args) abort " {{{2
   if !has('gui_running')
     " In console Vim we can't start a new Vim and kill the old one...
-    let msg = "session.vim %s: The :RestartVim command only works in graphical Vim!"
-    call xolox#misc#msg#warn(msg, g:xolox#session#version)
+    let msg = printf("session.vim %s: The :RestartVim command only works in graphical Vim!",
+          \ g:xolox#session#version)
+    call s:showmsg(msg, 'warning')
   else
     " Save the current session (if there is no active
     " session we will create a session called "restart").
@@ -799,26 +825,26 @@ function! xolox#session#restart_cmd(bang, args) abort " {{{2
     endif
     call xolox#session#save_cmd(name, a:bang, 'RestartVim')
     " Generate the Vim command line.
-    let progname = xolox#misc#escape#shell(xolox#misc#os#find_vim())
-    let command = progname . ' -g -c ' . xolox#misc#escape#shell('OpenSession\! ' . fnameescape(name))
+    let progname = v:progname
+    let command = progname . ' -g -c ' . shellescape('OpenSession\! ' . fnameescape(name))
     let args = matchstr(a:args, '^\s*|\s*\zs.\+$')
     if !empty(args)
-      let command .= ' -c ' . xolox#misc#escape#shell(args)
+      let command .= ' -c ' . shellescape(args)
     endif
     if !empty(v:servername)
-      let command .= ' --servername ' . xolox#misc#escape#shell(v:servername)
+      let command .= ' --servername ' . shellescape(v:servername)
     endif
     " Close the session, releasing the session lock.
     call xolox#session#close_cmd(a:bang, 0, 1, 'RestartVim')
     " Start the new Vim instance.
-    if xolox#misc#os#is_win()
+    if has('win32') || has('win64')
       " On Microsoft Windows.
       execute '!start' command
     else
       " On anything other than Windows (UNIX like).
       let cmdline = []
       for variable in g:session_restart_environment
-        call add(cmdline, variable . '=' . xolox#misc#escape#shell(fnameescape(eval('$' . variable))))
+        call add(cmdline, variable . '=' . shellescape(fnameescape(eval('$' . variable))))
       endfor
       call add(cmdline, command)
       call add(cmdline, printf("--cmd ':set enc=%s'", escape(&enc, '\ ')))
@@ -884,9 +910,8 @@ function! xolox#session#name_to_path(name) " {{{2
   " name will be encoded using URL encoding. This means you're free to use
   " whatever naming conventions you like (regardless of special characters
   " like slashes). Returns a string.
-  let directory = xolox#misc#path#absolute(g:session_directory)
-  let filename = xolox#misc#path#encode(a:name) . g:session_extension
-  return xolox#misc#path#merge(directory, filename)
+  " TODO: sanitize name
+  return fnamemodify(g:session_directory . a:name . g:session_extension, ':p')
 endfunction
 
 function! xolox#session#path_to_name(path) " {{{2
@@ -896,7 +921,8 @@ function! xolox#session#path_to_name(path) " {{{2
   " not check for it nor does it require it (it simple takes the base name
   " of the absolute pathname of the session script and decodes it). Returns a
   " string.
-  return xolox#misc#path#decode(fnamemodify(a:path, ':t:r'))
+  " TODO: sanitize output name
+  return fnamemodify(a:path, ':t:r')
 endfunction
 
 function! xolox#session#get_names(include_suggestions) " {{{2
@@ -909,8 +935,7 @@ function! xolox#session#get_names(include_suggestions) " {{{2
   " configured with `g:session_name_suggestion_function` is called to find
   " suggested session names, which are prefixed to the list of available
   " sessions, otherwise the argument should be false (0).
-  let directory = xolox#misc#path#absolute(g:session_directory)
-  let filenames = split(glob(xolox#misc#path#merge(directory, '*' . g:session_extension)), "\n")
+  let filenames = split(glob(g:session_directory . '*' . g:session_extension), "\n")
   call map(filenames, 'xolox#session#path_to_name(v:val)')
   if a:include_suggestions && !empty(g:session_name_suggestion_function)
     let suggested_names = call(g:session_name_suggestion_function, [])
@@ -947,7 +972,7 @@ function! xolox#session#find_current_session() " {{{2
       let filename = eval(variable)
       if !empty(filename)
         let directory = fnamemodify(filename, ':p:h')
-        if xolox#misc#path#equals(directory, g:session_directory)
+        if directory ==? g:session_directory
           return xolox#session#path_to_name(filename)
         endif
       endif
@@ -978,7 +1003,7 @@ function! xolox#session#options_include(value) " {{{2
   " does, 0 (false) otherwise.
   "
   " [sessionoptions]: http://vimdoc.sourceforge.net/htmldoc/options.html#'sessionoptions'
-  return index(xolox#misc#option#split(&sessionoptions), a:value) >= 0
+  return &sessionoptions =~ a:value
 endfunction
 
 " Tab scoped sessions: {{{2
@@ -1010,22 +1035,23 @@ endfunction
 " Default to last used session: {{{2
 
 function! s:last_session_file()
-  let directory = xolox#misc#path#absolute(g:session_directory)
-  return xolox#misc#path#merge(directory, 'last-session.txt')
+  return fnamemodify (g:session_directory, ':p') . 'last-session.txt'
 endfunction
 
 function! s:last_session_persist(name)
-  if g:session_default_to_last
-    if writefile([a:name], s:last_session_file()) != 0
-      call xolox#misc#msg#warn("session.vim %s: Failed to persist name of last used session!", g:xolox#session#version)
-    endif
+  if g:session_default_to_last && writefile([a:name], s:last_session_file()) != 0
+    let msg = printf("session.vim %s: Failed to persist name of last used session!",
+          \ g:xolox#session#version)
+    call s:showmsg(msg, 'warning')
   endif
 endfunction
 
 function! s:last_session_forget()
   let last_session_file = s:last_session_file()
   if filereadable(last_session_file) && delete(last_session_file) != 0
-    call xolox#misc#msg#warn("session.vim %s: Failed to delete name of last used session!", g:xolox#session#version)
+    let msg = printf("session.vim %s: Failed to delete name of last used session!",
+          \ g:xolox#session#version)
+    call s:showmsg(msg, 'warning')
   endif
 endfunction
 
@@ -1052,7 +1078,7 @@ function! xolox#session#locking_enabled()
   "
   " By default session locking is enabled but users can opt-out by setting
   " `g:session_lock_enabled` to false (0).
-  return xolox#misc#option#get('session_lock_enabled', 1)
+  return g:session_lock_enabled
 endfunction
 
 function! s:vim_instance_id()
@@ -1067,7 +1093,7 @@ function! s:vim_instance_id()
 endfunction
 
 function! s:lock_file_path(session_path)
-  let directory = xolox#misc#option#get('session_lock_directory', '')
+  let directory = g:session_lock_directory
   if empty(directory)
     " Stale lock files can be really annoying, especially after a reboot
     " because that just shouldn't happen - it's always a bug. References:
@@ -1085,7 +1111,7 @@ function! s:lock_file_path(session_path)
     endif
   endif
   if !empty(directory)
-    let pathname = xolox#misc#path#merge(directory, xolox#misc#path#encode(a:session_path))
+    let pathname = directory . a:session_path
   else
     let pathname = a:session_path
   endif
@@ -1097,7 +1123,7 @@ function! s:lock_session(session_path)
     return 1
   endif
   let lock_file = s:lock_file_path(a:session_path)
-  if xolox#misc#persist#save(lock_file, s:vim_instance_id())
+  if writefile(split(string(s:vim_instance_id()), "\n"), lock_file) == 0
     if index(s:lock_files, lock_file) == -1
       call add(s:lock_files, lock_file)
     endif
@@ -1127,8 +1153,9 @@ function! s:session_is_locked(session_name, command)
   let lock_file = s:lock_file_path(session_path)
   if filereadable(lock_file)
     let this_instance = s:vim_instance_id()
-    let other_instance = xolox#misc#persist#load(lock_file)
+    let other_instance = eval(join(readfile(lock_file), "\n"))
     let arguments = [g:xolox#session#version, string(a:session_name)]
+    let msg = ""
     if this_instance == other_instance
       " Session belongs to current Vim instance and tab page.
       return 0
@@ -1150,9 +1177,13 @@ function! s:session_is_locked(session_name, command)
     endif
     let msg .= " Use the command ':%s! %s' to override."
     call extend(arguments, [a:command, a:session_name])
-    call call('xolox#misc#msg#warn', [msg] + arguments)
+    call s:showmsg(call('printf', [msg] + arguments), 'warning')
     return 1
   endif
+endfunction
+
+function! s:showmsg (msg, ...)
+  echo a:msg
 endfunction
 
 " vim: ts=2 sw=2 et

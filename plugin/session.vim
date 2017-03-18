@@ -11,20 +11,6 @@ if &cp || exists('g:loaded_session')
   finish
 endif
 
-" Make sure vim-misc is installed. {{{1
-
-try
-  " The point of this code is to do something completely innocent while making
-  " sure the vim-misc plug-in is installed. We specifically don't use Vim's
-  " exists() function because it doesn't load auto-load scripts that haven't
-  " already been loaded yet (last tested on Vim 7.3).
-  call type(g:xolox#misc#version)
-catch
-  echomsg "Warning: The vim-session plug-in requires the vim-misc plug-in which seems not to be installed! For more information please review the installation instructions in the readme (also available on the homepage and on GitHub). The vim-session plug-in will now be disabled."
-  let g:loaded_session = 1
-  finish
-endtry
-
 " Configuration defaults. {{{1
 
 " The name of the default session (without directory or filename extension).
@@ -91,10 +77,10 @@ endif
 
 " The default directory where session scripts are stored.
 if !exists('g:session_directory')
-  if xolox#misc#os#is_win()
-    let g:session_directory = '~\vimfiles\sessions'
+  if has('win32') || has('win64')
+    let g:session_directory = "~/vimfiles/sessions/"
   else
-    let g:session_directory = '~/.vim/sessions'
+    let g:session_directory = "~/.vim/sessions/"
   endif
 endif
 
@@ -126,8 +112,9 @@ if !isdirectory(s:directory)
   call mkdir(s:directory, 'p')
 endif
 if filewritable(s:directory) != 2
-  let s:msg = "session.vim %s: The sessions directory %s isn't writable!"
-  call xolox#misc#msg#warn(s:msg, g:xolox#session#version, string(s:directory))
+  let msg = printf("session.vim %s: The sessions directory %s isn't writable!"
+        \ g:xolox#session#version, string(s:directory))
+  call s.showmsg(msg)
   unlet s:msg
   finish
 endif
@@ -159,7 +146,8 @@ augroup PluginSession
   au VimLeavePre * call xolox#session#auto_unlock()
 augroup END
 
-call xolox#misc#cursorhold#register({'function': 'xolox#session#auto_save_periodic', 'interval': 60})
+" FIXME: avoid hardcoding the interval time
+call timer_start(60000, 'xolox#session#auto_save_periodic', {'repeat': -1})
 
 " Plug-in commands (user defined commands). {{{1
 
@@ -201,5 +189,9 @@ endif
 " Don't reload the plug-in once it has loaded successfully. {{{1
 
 let g:loaded_session = 1
+
+function s:showmsg (...)
+  echo a:0
+endfunction
 
 " vim: ts=2 sw=2 et
