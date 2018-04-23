@@ -972,7 +972,7 @@ function! xolox#session#find_current_session() " {{{2
       let filename = eval(variable)
       if !empty(filename)
         let directory = fnamemodify(filename, ':p:h')
-        if directory ==? g:session_directory
+        if directory ==? fnamemodify(g:session_directory, ':p:h')
           return xolox#session#path_to_name(filename)
         endif
       endif
