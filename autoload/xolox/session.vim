@@ -613,7 +613,7 @@ function! xolox#session#open_cmd(name, bang, command) abort " {{{2
       let msg = printf("session.vim %s: Opened %s %s session from %s.",
             \ g:xolox#session#version, session_type, string(name),
             \ fnamemodify(path, ':~'))
-      call s:showmsg(msg)
+      " call s:showmsg(msg)
     endif
   endif
   return 1
