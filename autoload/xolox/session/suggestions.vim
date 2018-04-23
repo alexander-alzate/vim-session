@@ -20,7 +20,7 @@ function! xolox#session#suggestions#vcs_feature_branch() " {{{1
   else
     return []
   endif
-  let branch_name = systemlist(command)[0];
+  let branch_name = systemlist(command)[0]
   if !empty(branch_name) && index(names_to_ignore, branch_name) == -1
     return [branch_name]
   endif
